@@ -1,0 +1,79 @@
+name: Build iPad iOS (unsigned)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Check Unity activation credentials
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          if [[ -z "$UNITY_LICENSE" && ( -z "$UNITY_EMAIL" || -z "$UNITY_PASSWORD" ) ]]; then
+            echo "Configure UNITY_LICENSE, or UNITY_EMAIL and UNITY_PASSWORD, in repository Actions secrets."
+            exit 1
+          fi
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Export iOS Xcode project with Unity
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          unityVersion: 2022.3.62f3
+          targetPlatform: iOS
+          buildName: ArcCreate
+
+      - name: Compile without signing
+        shell: bash
+        run: |
+          set -o pipefail
+          project="$(find build/iOS -type d -name Unity-iPhone.xcodeproj -print -quit)"
+          if [[ -z "$project" ]]; then
+            echo "Unity-iPhone.xcodeproj was not found under build/iOS."
+            exit 1
+          fi
+          xcodebuild -project "$project" \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ArcCreateDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Upload unsigned Xcode project
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArcCreate-iOS-Xcode-project
+          path: build/iOS/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Xcode build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArcCreate-iOS-xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
